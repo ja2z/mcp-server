@@ -167,22 +167,73 @@ terraform output dynamodb_table_name
 terraform output secrets_manager_secret_name
 ```
 
+## Local Testing
+
+Before deploying to AWS, you can test the MCP server locally:
+
+### 1. Set up Environment Variables
+
+Create a `.env` file in the project root (this file is already in .gitignore):
+
+```bash
+# Sigma API Configuration
+SIGMA_CLIENT_ID=your_actual_sigma_client_id
+SIGMA_CLIENT_SECRET=your_actual_sigma_client_secret
+SIGMA_BASE_URL=https://api.sigmacomputing.com
+
+# Cache Configuration
+# Set to 'true' for local file-based cache (for testing)
+# Set to 'false' or omit for DynamoDB cache (for production)
+USE_LOCAL_CACHE=true
+
+# AWS Configuration (for local testing, these can be empty or use localstack)
+AWS_REGION=us-east-1
+CACHE_TABLE_NAME=sigma-documents-cache
+
+# Environment
+NODE_ENV=development
+```
+
+### 2. Install Dependencies
+
+```bash
+npm install
+```
+
+### 3. Test the Heartbeat
+
+Run the local test script to verify connectivity:
+
+```bash
+npm run test:local
+```
+
+This will:
+- Check your environment variables
+- Build the TypeScript code
+- Start the MCP server
+- Send a heartbeat request
+- Display the response with server status
+
+### 4. Manual Testing
+
+You can also run the server manually and interact with it:
+
+```bash
+# Build the project
+npm run build
+
+# Start the server
+npm start
+```
+
+The server will run on stdio and wait for MCP requests.
+
+**Note**: When using local cache (`USE_LOCAL_CACHE=true`), the server will create a `local-cache.json` file in the project root to store document metadata. This file will be automatically created on first run and updated when the cache is refreshed.
+
 ## Testing
 
 Test the deployment:
-
-```bash
-# Test Lambda function directly
-aws lambda invoke \
-  --function-name "$(terraform output -raw lambda_function_name)" \
-  --payload '{"method":"tools/list","params":{}}' \
-  response.json
-
-# Test via API Gateway
-curl -X POST "$(terraform output -raw api_gateway_url)" \
-  -H "Content-Type: application/json" \
-  -d '{"method":"tools/list","params":{}}'
-```
 
 ## Security Considerations
 

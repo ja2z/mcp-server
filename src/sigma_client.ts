@@ -70,7 +70,12 @@ export class SigmaApiClient {
   }
 
   private async refreshAccessToken() {
-    const response = await fetch(`${this.baseUrl}/v2/auth/token`, {
+    const tokenUrl = `${this.baseUrl}/v2/auth/token`;
+    console.log(`Requesting access token from: ${tokenUrl}`);
+    console.log(`Client ID: ${this.clientId ? '***' + this.clientId.slice(-4) : 'NOT SET'}`);
+    console.log(`Client Secret: ${this.clientSecret ? '***' + this.clientSecret.slice(-4) : 'NOT SET'}`);
+    
+    const response = await fetch(tokenUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -82,12 +87,17 @@ export class SigmaApiClient {
       }),
     });
 
+    console.log(`Token response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
-      throw new Error(`Failed to get access token: ${response.statusText}`);
+      const errorText = await response.text().catch(() => 'Unable to read error response');
+      console.log(`Token error response: ${errorText}`);
+      throw new Error(`Failed to get access token: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
     this.accessToken = data.access_token;
+    console.log(`Access token received: ${this.accessToken ? '***' + this.accessToken.slice(-10) : 'NOT SET'}`);
     
     // Set expiry to 90% of the actual expiry time to refresh early
     const expiresIn = data.expires_in * 0.9;
@@ -104,6 +114,8 @@ export class SigmaApiClient {
     await this.ensureValidToken();
 
     const url = `${this.baseUrl}${endpoint}`;
+    console.log(`Making request to: ${url}`);
+    
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -113,7 +125,11 @@ export class SigmaApiClient {
       },
     });
 
+    console.log(`Response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unable to read error response');
+      console.log(`Error response body: ${errorText}`);
       throw new Error(`API request failed: ${response.status} ${response.statusText}`);
     }
 
@@ -205,8 +221,26 @@ export class SigmaApiClient {
 
   // Heartbeat method to test API connectivity
   async whoami(): Promise<any> {
-    const response = await this.makeRequest('/v2/auth/whoami');
-    return await response.json();
+    try {
+      const response = await this.makeRequest('/v2/whoami');
+      return await response.json();
+    } catch (error) {
+      // If whoami endpoint doesn't exist, try a different approach
+      console.log('Whoami endpoint failed, trying alternative authentication test...');
+      
+      // Try to list workbooks as an alternative authentication test
+      try {
+        const response = await this.makeRequest('/v2/workbooks?limit=1');
+        const data = await response.json();
+        return {
+          authenticated: true,
+          message: 'Authentication successful (tested via workbooks endpoint)',
+          workbooks_count: data.entries?.length || 0
+        };
+      } catch (workbookError) {
+        throw new Error(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   // Placeholder method - implement based on Sigma's actual search API
