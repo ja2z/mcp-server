@@ -1,0 +1,307 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = "dev"
+}
+
+variable "sigma_base_url" {
+  description = "Sigma API base URL"
+  type        = string
+  default     = "https://api.sigmacomputing.com"
+}
+
+# Secrets Manager for Sigma API credentials
+resource "aws_secretsmanager_secret" "sigma_credentials" {
+  name                    = "sigma-api-credentials-${var.environment}"
+  description             = "Sigma API client credentials"
+  recovery_window_in_days = 7
+
+  tags = {
+    Environment = var.environment
+    Project     = "sigma-mcp"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "sigma_credentials" {
+  secret_id = aws_secretsmanager_secret.sigma_credentials.id
+  secret_string = jsonencode({
+    clientId     = "YOUR_SIGMA_CLIENT_ID"
+    clientSecret = "YOUR_SIGMA_CLIENT_SECRET"
+  })
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+# DynamoDB table for document cache
+resource "aws_dynamodb_table" "document_cache" {
+  name           = "sigma-documents-cache-${var.environment}"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "id"
+  range_key      = "type"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+
+  attribute {
+    name = "type"
+    type = "S"
+  }
+
+  attribute {
+    name = "name"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name     = "TypeNameIndex"
+    hash_key = "type"
+    range_key = "name"
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  tags = {
+    Environment = var.environment
+    Project     = "sigma-mcp"
+  }
+}
+
+# IAM role for Lambda
+resource "aws_iam_role" "lambda_role" {
+  name = "sigma-mcp-lambda-role-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Environment = var.environment
+    Project     = "sigma-mcp"
+  }
+}
+
+# IAM policy for Lambda
+resource "aws_iam_role_policy" "lambda_policy" {
+  name = "sigma-mcp-lambda-policy-${var.environment}"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Scan",
+          "dynamodb:Query"
+        ]
+        Resource = [
+          aws_dynamodb_table.document_cache.arn,
+          "${aws_dynamodb_table.document_cache.arn}/index/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = aws_secretsmanager_secret.sigma_credentials.arn
+      }
+    ]
+  })
+}
+
+# Lambda function
+resource "aws_lambda_function" "sigma_mcp" {
+  filename         = "sigma-mcp-server.zip"
+  function_name    = "sigma-mcp-server-${var.environment}"
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "index.handler"
+  runtime         = "nodejs18.x"
+  timeout         = 30
+  memory_size     = 512
+
+  environment {
+    variables = {
+      SIGMA_BASE_URL    = var.sigma_base_url
+      CACHE_TABLE_NAME  = aws_dynamodb_table.document_cache.name
+      NODE_ENV          = var.environment
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.lambda_policy,
+    aws_cloudwatch_log_group.lambda_logs
+  ]
+
+  tags = {
+    Environment = var.environment
+    Project     = "sigma-mcp"
+  }
+}
+
+# CloudWatch Log Group for Lambda
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  name              = "/aws/lambda/sigma-mcp-server-${var.environment}"
+  retention_in_days = 14
+
+  tags = {
+    Environment = var.environment
+    Project     = "sigma-mcp"
+  }
+}
+
+# API Gateway REST API
+resource "aws_api_gateway_rest_api" "sigma_mcp_api" {
+  name        = "sigma-mcp-api-${var.environment}"
+  description = "API Gateway for Sigma MCP Server"
+
+  endpoint_configuration {
+    types = ["REGIONAL"]
+  }
+
+  tags = {
+    Environment = var.environment
+    Project     = "sigma-mcp"
+  }
+}
+
+# API Gateway Resource (catch-all proxy)
+resource "aws_api_gateway_resource" "proxy" {
+  rest_api_id = aws_api_gateway_rest_api.sigma_mcp_api.id
+  parent_id   = aws_api_gateway_rest_api.sigma_mcp_api.root_resource_id
+  path_part   = "{proxy+}"
+}
+
+# API Gateway Method (ANY method for proxy)
+resource "aws_api_gateway_method" "proxy" {
+  rest_api_id   = aws_api_gateway_rest_api.sigma_mcp_api.id
+  resource_id   = aws_api_gateway_resource.proxy.id
+  http_method   = "ANY"
+  authorization = "NONE"
+}
+
+# API Gateway Integration with Lambda
+resource "aws_api_gateway_integration" "lambda_proxy" {
+  rest_api_id = aws_api_gateway_rest_api.sigma_mcp_api.id
+  resource_id = aws_api_gateway_method.proxy.resource_id
+  http_method = aws_api_gateway_method.proxy.http_method
+
+  integration_http_method = "POST"
+  type                   = "AWS_PROXY"
+  uri                    = aws_lambda_function.sigma_mcp.invoke_arn
+}
+
+# API Gateway Method for root path
+resource "aws_api_gateway_method" "proxy_root" {
+  rest_api_id   = aws_api_gateway_rest_api.sigma_mcp_api.id
+  resource_id   = aws_api_gateway_rest_api.sigma_mcp_api.root_resource_id
+  http_method   = "ANY"
+  authorization = "NONE"
+}
+
+# API Gateway Integration for root path
+resource "aws_api_gateway_integration" "lambda_root" {
+  rest_api_id = aws_api_gateway_rest_api.sigma_mcp_api.id
+  resource_id = aws_api_gateway_method.proxy_root.resource_id
+  http_method = aws_api_gateway_method.proxy_root.http_method
+
+  integration_http_method = "POST"
+  type                   = "AWS_PROXY"
+  uri                    = aws_lambda_function.sigma_mcp.invoke_arn
+}
+
+# API Gateway Deployment
+resource "aws_api_gateway_deployment" "sigma_mcp_deployment" {
+  depends_on = [
+    aws_api_gateway_integration.lambda_proxy,
+    aws_api_gateway_integration.lambda_root,
+  ]
+
+  rest_api_id = aws_api_gateway_rest_api.sigma_mcp_api.id
+  stage_name  = var.environment
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Lambda permission for API Gateway
+resource "aws_lambda_permission" "api_gw" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sigma_mcp.function_name
+  principal     = "apigateway.amazonaws.com"
+
+  # The "/*/*" portion grants access from any method on any resource
+  # within the API Gateway REST API.
+  source_arn = "${aws_api_gateway_rest_api.sigma_mcp_api.execution_arn}/*/*"
+}
+
+# Outputs
+output "api_gateway_url" {
+  description = "Base URL for API Gateway stage"
+  value       = aws_api_gateway_deployment.sigma_mcp_deployment.invoke_url
+}
+
+output "lambda_function_name" {
+  description = "Name of the Lambda function"
+  value       = aws_lambda_function.sigma_mcp.function_name
+}
+
+output "dynamodb_table_name" {
+  description = "Name of the DynamoDB table"
+  value       = aws_dynamodb_table.document_cache.name
+}
+
+output "secrets_manager_secret_name" {
+  description = "Name of the Secrets Manager secret"
+  value       = aws_secretsmanager_secret.sigma_credentials.name
+}
