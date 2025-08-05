@@ -1,6 +1,8 @@
 import { DynamoDBClient, GetItemCommand, PutItemCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { SigmaDocument } from "./sigma_client";
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 export interface CachedDocument extends SigmaDocument {
   searchableText: string; // Combined title, description, and other searchable content
@@ -8,18 +10,77 @@ export interface CachedDocument extends SigmaDocument {
 }
 
 export class DocumentCache {
-  private dynamoClient: DynamoDBClient;
+  private dynamoClient?: DynamoDBClient;
   private tableName: string;
   private cache: Map<string, CachedDocument[]> = new Map();
+  private useLocalStorage: boolean;
+  private cacheFilePath: string = '';
 
   constructor(tableName: string) {
     this.tableName = tableName;
-    this.dynamoClient = new DynamoDBClient({});
+    this.useLocalStorage = process.env.USE_LOCAL_CACHE === 'true';
+    
+    if (this.useLocalStorage) {
+      // Use local file storage for testing
+      this.cacheFilePath = path.join(process.cwd(), 'local-cache.json');
+      console.log(`Using local file cache at: ${this.cacheFilePath}`);
+    } else {
+      // Use DynamoDB for production
+      this.dynamoClient = new DynamoDBClient({});
+      console.log(`Using DynamoDB cache table: ${this.tableName}`);
+    }
   }
 
   async initialize() {
     // Load cached documents into memory for faster searches
-    await this.loadCacheFromDynamoDB();
+    if (this.useLocalStorage) {
+      await this.loadCacheFromLocalFile();
+    } else {
+      await this.loadCacheFromDynamoDB();
+    }
+  }
+
+  private async loadCacheFromLocalFile() {
+    try {
+      // Check if cache file exists
+      try {
+        await fs.access(this.cacheFilePath);
+      } catch {
+        // File doesn't exist, initialize empty cache
+        console.log("No local cache file found, initializing empty cache");
+        this.cache.set('workbooks', []);
+        this.cache.set('datasets', []);
+        return;
+      }
+
+      const cacheData = await fs.readFile(this.cacheFilePath, 'utf-8');
+      const parsedCache = JSON.parse(cacheData);
+      
+      this.cache.set('workbooks', parsedCache.workbooks || []);
+      this.cache.set('datasets', parsedCache.datasets || []);
+      
+      console.log(`Loaded ${parsedCache.workbooks?.length || 0} workbooks and ${parsedCache.datasets?.length || 0} datasets from local cache`);
+    } catch (error) {
+      console.error("Failed to load cache from local file:", error);
+      // Initialize empty cache
+      this.cache.set('workbooks', []);
+      this.cache.set('datasets', []);
+    }
+  }
+
+  private async saveCacheToLocalFile() {
+    try {
+      const cacheData = {
+        workbooks: this.cache.get('workbooks') || [],
+        datasets: this.cache.get('datasets') || [],
+        lastUpdated: new Date().toISOString()
+      };
+      
+      await fs.writeFile(this.cacheFilePath, JSON.stringify(cacheData, null, 2));
+      console.log(`Cache saved to local file: ${this.cacheFilePath}`);
+    } catch (error) {
+      console.error("Failed to save cache to local file:", error);
+    }
   }
 
   private async loadCacheFromDynamoDB() {
@@ -40,6 +101,10 @@ export class DocumentCache {
   }
 
   private async getCachedDocuments(documentType: 'workbook' | 'dataset'): Promise<CachedDocument[]> {
+    if (!this.dynamoClient) {
+      throw new Error("DynamoDB client not initialized");
+    }
+
     const params = {
       TableName: this.tableName,
       FilterExpression: "#type = :type",
@@ -137,14 +202,24 @@ export class DocumentCache {
       lastCached: new Date().toISOString()
     }));
 
-    // Store in DynamoDB
-    for (const doc of cachedDocuments) {
-      await this.dynamoClient.send(new PutItemCommand({
-        TableName: this.tableName,
-        Item: marshall({
-          ...doc
-        })
-      }));
+    if (this.useLocalStorage) {
+      // Store in local file
+      this.cache.set(documentType === 'workbook' ? 'workbooks' : 'datasets', cachedDocuments);
+      await this.saveCacheToLocalFile();
+    } else {
+      // Store in DynamoDB
+      if (!this.dynamoClient) {
+        throw new Error("DynamoDB client not initialized");
+      }
+
+      for (const doc of cachedDocuments) {
+        await this.dynamoClient.send(new PutItemCommand({
+          TableName: this.tableName,
+          Item: marshall({
+            ...doc
+          })
+        }));
+      }
     }
 
     // Update in-memory cache

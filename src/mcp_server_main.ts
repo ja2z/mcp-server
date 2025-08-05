@@ -1,3 +1,4 @@
+import { config } from "dotenv";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -10,6 +11,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { SigmaApiClient } from "./sigma_client.js";
 import { DocumentCache } from "./document_cache.js";
+
+// Load environment variables from .env file
+config();
 
 // Environment variables
 const CLIENT_ID = process.env.SIGMA_CLIENT_ID;
@@ -203,6 +207,9 @@ export class SigmaMcpServer {
       const startTime = Date.now();
       const whoamiResponse = await this.sigmaClient.whoami();
       const responseTime = Date.now() - startTime;
+      
+      // Print whoami response to stdout
+      console.log('Whoami response:', JSON.stringify(whoamiResponse, null, 2));
       
       // Get cache status
       const [workbooks, datasets] = await Promise.all([

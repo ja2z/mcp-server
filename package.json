@@ -7,8 +7,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/mcp_server_main.ts",
+    "dev:watch": "node dev-server.js",
     "start": "node dist/mcp_server_main.js",
     "test": "jest",
+    "test:local": "node test-local.js",
     "lint": "eslint src --ext .ts",
     "package": "npm run build && zip -r sigma-mcp-server.zip dist/ node_modules/ package.json"
   },
@@ -17,6 +19,7 @@
     "@aws-sdk/client-secrets-manager": "^3.680.0",
     "@aws-sdk/util-dynamodb": "^3.680.0",
     "@modelcontextprotocol/sdk": "^1.17.1",
+    "dotenv": "^16.4.0",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
