@@ -13,7 +13,7 @@ import { SigmaApiClient } from "./sigma_client.js";
 import { DocumentCache } from "./document_cache.js";
 
 // Load environment variables from .env file
-config({ path: "/Users/jonathanavrach/code/mcp-server/.env" });
+config();
 
 // Environment variables
 const CLIENT_ID = process.env.SIGMA_CLIENT_ID;
