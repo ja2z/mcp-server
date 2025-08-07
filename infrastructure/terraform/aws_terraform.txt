@@ -163,8 +163,8 @@ resource "aws_lambda_function" "sigma_mcp" {
   filename         = "sigma-mcp-server.zip"
   function_name    = "sigma-mcp-server-${var.environment}"
   role            = aws_iam_role.lambda_role.arn
-  handler         = "index.handler"
-  runtime         = "nodejs18.x"
+  handler         = "mcp_server_main.handler"
+  runtime         = "nodejs20.x"
   timeout         = 30
   memory_size     = 512
 

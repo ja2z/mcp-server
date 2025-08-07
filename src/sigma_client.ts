@@ -54,7 +54,7 @@ export class SigmaApiClient {
     try {
       const response = await secretsClient.send(
         new GetSecretValueCommand({
-          SecretId: "sigma-api-credentials",
+          SecretId: "sigma-api-credentials-dev",
         })
       );
 
