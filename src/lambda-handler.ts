@@ -115,7 +115,12 @@ export const handler = async (event: any, context: any) => {
         case 'initialized':
           result = {};
           break;
-  
+        
+        case 'notifications/initialized':
+            // This is a notification, not a request, so we just acknowledge it
+            result = {};
+            break;
+
         case 'ping':
           result = {};
           break;
