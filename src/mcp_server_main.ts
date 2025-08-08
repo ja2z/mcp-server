@@ -335,7 +335,7 @@ export class SigmaMcpServer {
     await this.documentCache.initialize();
   }
 
-   async callTool(name: string, args: any) {
+  async callTool(name: string, args: any) {
     switch (name) {
       case "heartbeat":
         return await this.handleHeartbeat(args);
