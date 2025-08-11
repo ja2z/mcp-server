@@ -42,24 +42,24 @@ server.stdout.on('data', (data) => {
   const output = data.toString();
   console.log('📡 Server response:');
   console.log(output);
-  
+
   try {
     const response = JSON.parse(output);
     if (response.result && response.result.content) {
       const content = response.result.content[0].text;
       const heartbeatData = JSON.parse(content);
-      
+
       console.log('\n📊 Connection Status:');
       console.log(`Status: ${heartbeatData.status}`);
       console.log(`Sigma API Connected: ${heartbeatData.sigma_api?.connected ? '✅ YES' : '❌ NO'}`);
-      
+
       if (heartbeatData.sigma_api?.connected) {
         console.log(`Response Time: ${heartbeatData.sigma_api.response_time_ms}ms`);
         console.log(`User Info: ${JSON.stringify(heartbeatData.sigma_api.user_info, null, 2)}`);
       } else {
         console.log(`Error: ${heartbeatData.error || 'Unknown error'}`);
       }
-      
+
       responseReceived = true;
       server.kill();
     }

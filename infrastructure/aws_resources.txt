@@ -1,0 +1,8 @@
+sigma-api-credentials-dev = arn:aws:secretsmanager:us-west-2:763903610969:secret:sigma-api-credentials-dev-1PKXbp
+sigma-documents-cache-dev = arn:aws:dynamodb:us-west-2:763903610969:table/sigma-documents-cache-dev
+sigma-mcp-lambda-role-dev = arn:aws:iam::763903610969:role/sigma-mcp-lambda-role-dev
+/aws/lambda/sigma-mcp-server-dev = arn:aws:logs:us-west-2:763903610969:log-group:/aws/lambda/sigma-mcp-server-dev:*
+sigma-mcp-server-dev = arn:aws:lambda:us-west-2:763903610969:function:sigma-mcp-server-dev
+sigma-mcp-api-dev = arn:aws:execute-api:us-west-2:763903610969:afswe7a63l/*/*/ | arn:aws:execute-api:us-west-2:763903610969:afswe7a63l/*/*/{proxy+}
+sigma-mcp-api-dev invoke url = https://afswe7a63l.execute-api.us-west-2.amazonaws.com/dev
+

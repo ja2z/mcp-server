@@ -334,28 +334,141 @@ export class SigmaMcpServer {
     await this.server.connect(transport);
     console.error("Sigma MCP server running on stdio");
   }
-}
 
-// Lambda handler for AWS
-export const handler = async (event: any, context: any) => {
-  try {
-    const server = new SigmaMcpServer();
-    await server.start();
-    
-    // Handle the specific MCP request from the event
-    // This will need to be adapted based on how you route requests through API Gateway
+  async initialize() {
+    await this.sigmaClient.initialize();
+    await this.documentCache.initialize();
+  }
+
+  async callTool(name: string, args: any) {
+    switch (name) {
+      case "heartbeat":
+        return await this.handleHeartbeat(args);
+      case "export_data":
+        return await this.handleExportData(args);
+      case "search_documents":
+        return await this.handleSearchDocuments(args);
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  }
+
+  async listResources() {
     return {
-      statusCode: 200,
-      body: JSON.stringify({ message: "MCP server initialized" }),
-    };
-  } catch (error) {
-    console.error("Lambda handler error:", error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "Internal server error" }),
+      resources: [
+        {
+          uri: "sigma://documents/workbooks",
+          name: "Sigma Workbooks",
+          description: "List of all available Sigma workbooks with metadata",
+          mimeType: "application/json",
+        },
+        {
+          uri: "sigma://documents/datasets",
+          name: "Sigma Datasets", 
+          description: "List of all available Sigma datasets with metadata",
+          mimeType: "application/json",
+        },
+      ],
     };
   }
-};
+
+  async listTools() {
+    return {
+      tools: [
+        {
+          name: "heartbeat",
+          description: "Test connectivity to Sigma API and return server information",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "export_data",
+          description: "Export data from a Sigma workbook or dataset in CSV/JSON format",
+          inputSchema: {
+            type: "object",
+            properties: {
+              workbook_id: {
+                type: "string",
+                description: "The ID of the workbook to export data from",
+              },
+              element_id: {
+                type: "string", 
+                description: "The ID of the specific element (table/chart) to export",
+              },
+              format: {
+                type: "string",
+                enum: ["csv", "json"],
+                description: "Export format",
+                default: "json",
+              },
+            },
+            required: ["workbook_id", "element_id"],
+          },
+        },
+        {
+          name: "search_documents",
+          description: "Search for Sigma workbooks or datasets based on title, description, or content",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Search query to match against document titles, descriptions, and content",
+              },
+              document_type: {
+                type: "string",
+                enum: ["workbook", "dataset", "all"],
+                description: "Type of documents to search",
+                default: "all",
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of results to return",
+                default: 10,
+              },
+            },
+            required: ["query"],
+          },
+        },
+      ],
+    };
+  }
+
+  // Read specific resources
+  async readResource(uri: string) {
+    if (uri === "sigma://documents/workbooks") {
+      const workbooks = await this.documentCache.getWorkbooks();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(workbooks, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (uri === "sigma://documents/datasets") {
+      const datasets = await this.documentCache.getDatasets();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json", 
+            text: JSON.stringify(datasets, null, 2),
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
+  }
+}
+
 
 // For local development
 if (import.meta.url === `file://${process.argv[1]}`) {
