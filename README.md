@@ -3,6 +3,14 @@
 ## Overview
 This guide walks you through deploying the Sigma MCP Server to AWS Lambda with API Gateway.
 
+## Sample Questions to test the MCP Server
+"What's the status of the Sigma MCP server?"
+"Check the Sigma MCP server connection"
+"Test the Sigma MCP server connectivity"
+"Is the Sigma MCP server working?"
+"Get the current status of the Sigma MCP server"
+"Verify the Sigma MCP server is operational"
+
 ## Architecture
 ```
 Claude/MCP Client → API Gateway → Lambda → DynamoDB (cache)

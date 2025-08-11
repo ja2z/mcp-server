@@ -19,7 +19,12 @@ config();
 const CLIENT_ID = process.env.SIGMA_CLIENT_ID;
 const CLIENT_SECRET = process.env.SIGMA_CLIENT_SECRET;
 const SIGMA_BASE_URL = process.env.SIGMA_BASE_URL || "https://api.sigmacomputing.com";
-const CACHE_TABLE_NAME = process.env.CACHE_TABLE_NAME || "sigma-documents-cache";
+const CACHE_TABLE_NAME = process.env.CACHE_TABLE_NAME;
+
+// Validate required environment variables
+if (!CLIENT_ID || !CLIENT_SECRET || !CACHE_TABLE_NAME) {
+  throw new Error("Missing required environment variables: SIGMA_CLIENT_ID, SIGMA_CLIENT_SECRET, CACHE_TABLE_NAME");
+}
 
 export class SigmaMcpServer {
   private server: Server;
@@ -46,7 +51,7 @@ export class SigmaMcpServer {
       clientSecret: CLIENT_SECRET!,
     });
 
-    this.documentCache = new DocumentCache(CACHE_TABLE_NAME);
+    this.documentCache = new DocumentCache(CACHE_TABLE_NAME!);
 
     this.setupHandlers();
   }
