@@ -22,7 +22,7 @@ const SIGMA_BASE_URL = process.env.SIGMA_BASE_URL || "https://api.sigmacomputing
 const CACHE_TABLE_NAME = process.env.CACHE_TABLE_NAME;
 
 // Validate required environment variables
-if (!CLIENT_ID || !CLIENT_SECRET || !CACHE_TABLE_NAME) {
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME && (!CLIENT_ID || !CLIENT_SECRET || !CACHE_TABLE_NAME)) {
   throw new Error("Missing required environment variables: SIGMA_CLIENT_ID, SIGMA_CLIENT_SECRET, CACHE_TABLE_NAME");
 }
 
