@@ -1,31 +1,29 @@
 import { DynamoDBClient, GetItemCommand, PutItemCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { SigmaDocument, DocumentAnalytics } from "./sigma_client";
+import { SigmaDocument } from "./sigma_client";
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 export interface CachedDocument extends SigmaDocument {
   searchableText: string; // Combined title, description, and other searchable content
   lastCached: string;
 }
 
-export interface CachedDocumentAnalytics {
-  data: DocumentAnalytics[];
-  lastCached: string;
-  workbookId: string;
-  elementId: string;
-}
-
 export class DocumentCache {
   private dynamoClient?: DynamoDBClient;
   private tableName: string;
   private cache: Map<string, CachedDocument[]> = new Map();
-  private skipCache: boolean;
+  private useLocalStorage: boolean;
+  private cacheFilePath: string = '';
 
   constructor(tableName: string) {
     this.tableName = tableName;
-    this.skipCache = process.env.SKIP_CACHE === 'true';
+    this.useLocalStorage = process.env.USE_LOCAL_CACHE === 'true';
     
-    if (this.skipCache) {
-      console.log('⚠️ Cache is disabled for testing');
+    if (this.useLocalStorage) {
+      // Use local file storage for testing
+      this.cacheFilePath = path.join(process.cwd(), 'local-cache.json');
+      console.log(`Using local file cache at: ${this.cacheFilePath}`);
     } else {
       // Use DynamoDB for production
       this.dynamoClient = new DynamoDBClient({});
@@ -34,15 +32,55 @@ export class DocumentCache {
   }
 
   async initialize() {
-    if (this.skipCache) {
-      console.log('Skipping cache initialization');
+    // Load cached documents into memory for faster searches
+    if (this.useLocalStorage) {
+      await this.loadCacheFromLocalFile();
+    } else {
+      await this.loadCacheFromDynamoDB();
+    }
+  }
+
+  private async loadCacheFromLocalFile() {
+    try {
+      // Check if cache file exists
+      try {
+        await fs.access(this.cacheFilePath);
+      } catch {
+        // File doesn't exist, initialize empty cache
+        console.log("No local cache file found, initializing empty cache");
+        this.cache.set('workbooks', []);
+        this.cache.set('datasets', []);
+        return;
+      }
+
+      const cacheData = await fs.readFile(this.cacheFilePath, 'utf-8');
+      const parsedCache = JSON.parse(cacheData);
+      
+      this.cache.set('workbooks', parsedCache.workbooks || []);
+      this.cache.set('datasets', parsedCache.datasets || []);
+      
+      console.log(`Loaded ${parsedCache.workbooks?.length || 0} workbooks and ${parsedCache.datasets?.length || 0} datasets from local cache`);
+    } catch (error) {
+      console.error("Failed to load cache from local file:", error);
+      // Initialize empty cache
       this.cache.set('workbooks', []);
       this.cache.set('datasets', []);
-      return;
     }
-    
-    // Load cached documents into memory for faster searches
-    await this.loadCacheFromDynamoDB();
+  }
+
+  private async saveCacheToLocalFile() {
+    try {
+      const cacheData = {
+        workbooks: this.cache.get('workbooks') || [],
+        datasets: this.cache.get('datasets') || [],
+        lastUpdated: new Date().toISOString()
+      };
+      
+      await fs.writeFile(this.cacheFilePath, JSON.stringify(cacheData, null, 2));
+      console.log(`Cache saved to local file: ${this.cacheFilePath}`);
+    } catch (error) {
+      console.error("Failed to save cache to local file:", error);
+    }
   }
 
   private async loadCacheFromDynamoDB() {
@@ -75,7 +113,7 @@ export class DocumentCache {
       },
       ExpressionAttributeValues: marshall({
         ":type": documentType
-      }, { removeUndefinedValues: true })
+      })
     };
 
     const result = await this.dynamoClient.send(new ScanCommand(params));
@@ -164,23 +202,24 @@ export class DocumentCache {
       lastCached: new Date().toISOString()
     }));
 
-    if (this.skipCache) {
-      console.log('Cache disabled, skipping document cache update');
-      return;
-    }
+    if (this.useLocalStorage) {
+      // Store in local file
+      this.cache.set(documentType === 'workbook' ? 'workbooks' : 'datasets', cachedDocuments);
+      await this.saveCacheToLocalFile();
+    } else {
+      // Store in DynamoDB
+      if (!this.dynamoClient) {
+        throw new Error("DynamoDB client not initialized");
+      }
 
-    // Store in DynamoDB
-    if (!this.dynamoClient) {
-      throw new Error("DynamoDB client not initialized");
-    }
-
-    for (const doc of cachedDocuments) {
-      await this.dynamoClient.send(new PutItemCommand({
-        TableName: this.tableName,
-        Item: marshall({
-          ...doc
-        })
-      }));
+      for (const doc of cachedDocuments) {
+        await this.dynamoClient.send(new PutItemCommand({
+          TableName: this.tableName,
+          Item: marshall({
+            ...doc
+          })
+        }));
+      }
     }
 
     // Update in-memory cache
@@ -202,122 +241,27 @@ export class DocumentCache {
 
   // Utility method to refresh cache from Sigma API
   async refreshCache(sigmaClient: any) {
+    console.log("Refreshing document cache...");
+    
     try {
-      console.log("Refreshing document cache...");
-      
       const [workbooks, datasets] = await Promise.all([
         sigmaClient.listWorkbooks(),
         sigmaClient.listDatasets()
       ]);
-      
+
+      // Get detailed information for each workbook (including elements)
+      const detailedWorkbooks = await Promise.all(
+        workbooks.map((wb: any) => sigmaClient.getWorkbookDetails(wb.id))
+      );
+
       await Promise.all([
-        this.updateDocumentCache(workbooks, 'workbook'),
+        this.updateDocumentCache(detailedWorkbooks, 'workbook'),
         this.updateDocumentCache(datasets, 'dataset')
       ]);
-      
-      console.log(`Cache refreshed: ${workbooks.length} workbooks, ${datasets.length} datasets`);
+
+      console.log("Cache refresh completed successfully");
     } catch (error) {
       console.error("Failed to refresh cache:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get cached document analytics data
-   */
-  async getCachedDocumentAnalytics(workbookId: string, elementId: string): Promise<DocumentAnalytics[] | null> {
-    if (this.skipCache) {
-      console.log('Cache disabled, returning null for analytics data');
-      return null;
-    }
-    
-    const cacheKey = `analytics:${workbookId}:${elementId}`;
-    return this.getCachedAnalyticsFromDynamoDB(cacheKey);
-  }
-
-  /**
-   * Cache document analytics data
-   */
-  async cacheDocumentAnalytics(workbookId: string, elementId: string, data: DocumentAnalytics[]): Promise<void> {
-    if (this.skipCache) {
-      console.log('Cache disabled, skipping analytics data caching');
-      return;
-    }
-    
-    const cacheKey = `analytics:${workbookId}:${elementId}`;
-    const cachedData: CachedDocumentAnalytics = {
-      data,
-      lastCached: new Date().toISOString(),
-      workbookId,
-      elementId
-    };
-
-    await this.saveAnalyticsToDynamoDB(cacheKey, cachedData);
-  }
-
-  /**
-   * Check if analytics data is still valid (within 30 minutes)
-   */
-  isAnalyticsCacheValid(lastCached: string): boolean {
-    const cacheAge = Date.now() - new Date(lastCached).getTime();
-    const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in milliseconds
-    return cacheAge < thirtyMinutes;
-  }
-
-  private async getCachedAnalyticsFromDynamoDB(cacheKey: string): Promise<DocumentAnalytics[] | null> {
-    if (!this.dynamoClient) {
-      throw new Error("DynamoDB client not initialized");
-    }
-
-    try {
-      const command = new GetItemCommand({
-        TableName: this.tableName,
-        Key: marshall({
-          pk: cacheKey,
-          sk: 'analytics'
-        }, { removeUndefinedValues: true })
-      });
-
-      const response = await this.dynamoClient.send(command);
-      
-      if (!response.Item) {
-        return null;
-      }
-
-      const cachedAnalytics = unmarshall(response.Item) as CachedDocumentAnalytics;
-      
-      // Check if cache is still valid
-      if (!this.isAnalyticsCacheValid(cachedAnalytics.lastCached)) {
-        console.log(`Analytics cache expired for ${cacheKey}`);
-        return null;
-      }
-
-      return cachedAnalytics.data;
-    } catch (error) {
-      console.error("Failed to load analytics from DynamoDB:", error);
-      return null;
-    }
-  }
-
-  private async saveAnalyticsToDynamoDB(cacheKey: string, data: CachedDocumentAnalytics): Promise<void> {
-    if (!this.dynamoClient) {
-      throw new Error("DynamoDB client not initialized");
-    }
-
-    try {
-      const command = new PutItemCommand({
-        TableName: this.tableName,
-        Item: marshall({
-          pk: cacheKey,
-          sk: 'analytics',
-          ...data
-        }, { removeUndefinedValues: true })
-      });
-
-      await this.dynamoClient.send(command);
-      console.log(`Analytics cache saved to DynamoDB: ${cacheKey}`);
-    } catch (error) {
-      console.error("Failed to save analytics to DynamoDB:", error);
       throw error;
     }
   }
