@@ -493,57 +493,7 @@ export class SigmaMcpServer {
     return await this.sigmaClient.exportData(workbookId, elementId, format, parameters);
   }
 
-  /**
-   * Reusable method for getting document analytics data from Sigma
-   * This can be used by multiple tools that need analytics data
-   */
-  private async getDocumentAnalyticsFromSigma(workbookId: string, elementId: string, parameters?: { [key: string]: string }): Promise<any[]> {
-    debugLog(`getDocumentAnalyticsFromSigma called with workbookId: ${workbookId}, elementId: ${elementId}`);
-    if (parameters) {
-      debugLog(`Using parameters:`, parameters);
-    }
-    
-    // If parameters are provided, bypass cache to get fresh data
-    if (parameters) {
-      debugLog(`Parameters provided, bypassing cache to get fresh data...`);
-      try {
-        const analyticsData = await this.sigmaClient.getDocumentAnalytics(workbookId, elementId, parameters);
-        debugLog(`Successfully fetched ${analyticsData.length} analytics records from Sigma with parameters`);
-        return analyticsData;
-      } catch (error) {
-        debugLog(`Failed to fetch analytics data from Sigma with parameters:`, error instanceof Error ? error.message : String(error));
-        throw error;
-      }
-    }
-    
-    // Check cache first (only when no parameters)
-    debugLog(`Checking cache for analytics data...`);
-    let analyticsData = await this.documentCache.getCachedDocumentAnalytics(workbookId, elementId);
-    
-    if (!analyticsData) {
-      debugLog(`Analytics data not found in cache for workbook ${workbookId}, element ${elementId}, fetching from Sigma...`);
-      
-      // Fetch fresh data from Sigma
-      debugLog(`Calling sigmaClient.getDocumentAnalytics...`);
-      try {
-        analyticsData = await this.sigmaClient.getDocumentAnalytics(workbookId, elementId);
-        debugLog(`Successfully fetched ${analyticsData.length} analytics records from Sigma`);
-        
-        // Cache the data
-        debugLog(`Caching analytics data...`);
-        await this.documentCache.cacheDocumentAnalytics(workbookId, elementId, analyticsData);
-        debugLog(`Analytics data cached successfully`);
-      } catch (error) {
-        debugLog(`Failed to fetch analytics data from Sigma:`, error instanceof Error ? error.message : String(error));
-        throw error;
-      }
-    } else {
-      debugLog(`Using cached analytics data (${analyticsData.length} records)`);
-    }
 
-    debugLog(`Returning ${analyticsData.length} analytics records`);
-    return analyticsData;
-  }
 
   private async handleSearchDocuments(args: any) {
     const { query, document_type = "all", limit = 10 } = args;
@@ -608,9 +558,16 @@ export class SigmaMcpServer {
         }
       }
 
-      // Get analytics data from Sigma (with date filter if provided)
-      const analyticsData = await this.getDocumentAnalyticsFromSigma(ANALYTICS_WORKBOOK_ID, ANALYTICS_ELEMENT_ID, parameters);
-      debugLog(`Retrieved ${analyticsData.length} analytics records`);
+      // Get analytics data directly from Sigma (bypassing cache)
+      debugLog(`Fetching analytics data directly from Sigma...`);
+      let analyticsData: any[];
+      try {
+        analyticsData = await this.sigmaClient.getDocumentAnalytics(ANALYTICS_WORKBOOK_ID, ANALYTICS_ELEMENT_ID, parameters);
+        debugLog(`Successfully fetched ${analyticsData.length} analytics records from Sigma`);
+      } catch (error) {
+        debugLog(`Failed to fetch analytics data from Sigma:`, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
 
       console.log(`📊 [ANALYTICS] Retrieved ${analyticsData.length} documents from Sigma`);
       console.log(`🔍 [SQL] Executing query: ${sql_query}`);
