@@ -404,7 +404,7 @@ export class SigmaMcpServer {
               document_cache: {
                 workbooks_count: workbooks.length,
                 datasets_count: datasets.length,
-                last_updated: workbooks[0]?.lastCached || datasets[0]?.lastCached || "never"
+                last_updated: workbooks[0]?.last_cached_at || datasets[0]?.last_cached_at || "never"
               },
               server_info: {
                 version: "0.1.0",
@@ -503,6 +503,20 @@ export class SigmaMcpServer {
     }
 
     try {
+      const workbooks = await this.documentCache.getWorkbooks();
+      const datasets = await this.documentCache.getDatasets();
+      
+      if (workbooks.length === 0 && datasets.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No documents in cache. The cache appears to be empty. Please ensure documents have been loaded into DynamoDB.`,
+            },
+          ],
+        };
+      }
+      
       const results = await this.documentCache.searchDocuments(query, document_type, limit);
       
       return {

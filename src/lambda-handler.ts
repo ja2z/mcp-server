@@ -163,7 +163,23 @@ export const handler = async (event: any, context: any) => {
             };
           }
           
-          result = await server.callTool(toolName, toolArgs);
+          try {
+            result = await server.callTool(toolName, toolArgs);
+          } catch (error) {
+            console.error(`Tool execution failed for ${toolName}:`, error);
+            return {
+              statusCode: 500,
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+              },
+              body: JSON.stringify(createErrorResponse(
+                jsonRpcRequest.id, 
+                -32603, 
+                `Tool execution failed: ${error instanceof Error ? error.message : String(error)}`
+              )),
+            };
+          }
           break;
   
         default:

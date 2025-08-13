@@ -76,4 +76,21 @@ curl -s -X POST "$API_URL" \
     "params": {}
   }' | jq '.'
 
+echo -e "\n7. Testing doc search tool:"
+curl -s -X POST "$API_URL" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "tools/call",
+    "params": {
+      "name": "search_documents",
+      "arguments": {
+        "query": "sales data",
+        "document_type": "workbook",
+        "limit": 3
+      }
+    }
+  }' | jq '.'
+
 echo -e "\nTest complete!"

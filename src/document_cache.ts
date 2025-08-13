@@ -1,13 +1,9 @@
 import { DynamoDBClient, GetItemCommand, PutItemCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { SigmaDocument } from "./sigma_client";
+import { SigmaDocument, CachedDocument } from "./types.js";
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-export interface CachedDocument extends SigmaDocument {
-  searchableText: string; // Combined title, description, and other searchable content
-  lastCached: string;
-}
 
 export class DocumentCache {
   private dynamoClient?: DynamoDBClient;
@@ -26,7 +22,7 @@ export class DocumentCache {
       console.log(`Using local file cache at: ${this.cacheFilePath}`);
     } else {
       // Use DynamoDB for production
-      this.dynamoClient = new DynamoDBClient({});
+      this.dynamoClient = new DynamoDBClient({region: "us-west-2"});
       console.log(`Using DynamoDB cache table: ${this.tableName}`);
     }
   }
@@ -117,8 +113,18 @@ export class DocumentCache {
     };
 
     const result = await this.dynamoClient.send(new ScanCommand(params));
+    console.log(`Found ${result.Items?.length || 0} ${documentType} items in DynamoDB`);
+
+    const documents = result.Items?.map(item => {
+      const unmarshalled = unmarshall(item) as CachedDocument;
+      // Log first document for debugging
+      if (result.Items?.indexOf(item) === 0) {
+        console.log(`Sample ${documentType} from DynamoDB:`, JSON.stringify(unmarshalled, null, 2));
+      }
+      return unmarshalled;
+    }) || [];
     
-    return result.Items?.map(item => unmarshall(item) as CachedDocument) || [];
+    return documents;
   }
 
   async getWorkbooks(): Promise<CachedDocument[]> {
@@ -130,6 +136,14 @@ export class DocumentCache {
   }
 
   async searchDocuments(query: string, documentType: 'workbook' | 'dataset' | 'all' = 'all', limit: number = 10): Promise<CachedDocument[]> {
+    console.log(`Searching for: "${query}" in ${documentType} documents, limit: ${limit}`);
+
+    // Add null check for query
+    if (!query || typeof query !== 'string') {
+      console.error('Invalid query:', query);
+      return [];
+    }
+
     const searchTerm = query.toLowerCase();
     let documentsToSearch: CachedDocument[] = [];
 
@@ -144,9 +158,17 @@ export class DocumentCache {
       documentsToSearch = this.cache.get('datasets') || [];
     }
 
-    // Simple text-based search with relevance scoring
+    console.log(`Total documents to search: ${documentsToSearch.length}`);
+
+    // Log the first document structure for debugging
+    if (documentsToSearch.length > 0) {
+      console.log('Sample document structure:', JSON.stringify(documentsToSearch[0], null, 2));
+    }
+
+    // Enhanced search with relevance scoring
     const results = documentsToSearch
-      .map(doc => ({
+    .filter(doc => doc != null)  
+    .map(doc => ({
         document: doc,
         score: this.calculateRelevanceScore(doc, searchTerm)
       }))
@@ -159,11 +181,33 @@ export class DocumentCache {
   }
 
   private calculateRelevanceScore(document: CachedDocument, searchTerm: string): number {
+    // Add debugging
+    if (!document) {
+      console.error('calculateRelevanceScore: document is undefined');
+      return 0;
+    }
+    
+    if (!searchTerm) {
+      console.error('calculateRelevanceScore: searchTerm is undefined');
+      return 0;
+    }
+
     let score = 0;
-    const searchableText = document.searchableText.toLowerCase();
-    const name = document.name.toLowerCase();
+    
+    // Safely access properties with fallbacks
+    const searchableText = (document.searchable_text || '').toLowerCase();
+    const name = (document.name || '').toLowerCase();
     const description = (document.description || '').toLowerCase();
 
+    // Debug log if any required field is missing
+    if (!document.searchable_text) {
+      console.warn(`Document ${document.id} missing searchable_text`);
+    }
+    if (!document.name) {
+      console.warn(`Document ${document.id} missing name`);
+    }
+
+    // Rest of your scoring logic...
     // Exact name match gets highest score
     if (name === searchTerm) {
       score += 100;
@@ -183,6 +227,13 @@ export class DocumentCache {
       score += 10;
     }
 
+    // Badge status bonus (prioritize endorsed content) - also add null check here
+    if (document.badge_status === 'Endorsed') {
+      score += 5;
+    } else if (document.badge_status === 'Deprecated') {
+      score -= 10;
+    }
+
     // Bonus for multiple word matches
     const searchWords = searchTerm.split(' ').filter(word => word.length > 2);
     for (const word of searchWords) {
@@ -191,16 +242,44 @@ export class DocumentCache {
       }
     }
 
-    return score;
+    return Math.max(0, score);
+}
+
+  // Convert from Sigma API format to your cache format
+  private convertToCache(document: SigmaDocument, sigmaApiData?: any): CachedDocument {
+    return {
+      id: document.id,
+      type: document.type,
+      name: document.name,
+      description: document.description,
+      url: document.url,
+      searchable_text: this.buildSearchableText(document),
+      last_cached_at: new Date().toISOString(),
+      created_by: sigmaApiData?.createdBy || 'unknown@example.com', // You'll need to get this from Sigma API
+      updated_at: document.updatedAt || document.createdAt || new Date().toISOString(),
+      badge_status: this.determineBadgeStatus(document, sigmaApiData), // You'll need logic for this
+    };
+  }
+
+  private determineBadgeStatus(document: SigmaDocument, sigmaApiData?: any): 'Endorsed' | 'Warning' | 'Deprecated' {
+    // Add your logic here to determine badge status
+    // This might come from Sigma API tags, metadata, or custom logic
+    if (document.tags?.includes('endorsed')) return 'Endorsed';
+    if (document.tags?.includes('deprecated')) return 'Deprecated';
+    if (sigmaApiData?.badgeStatus) return sigmaApiData.badgeStatus;
+    
+    // Default logic - you can customize this
+    const daysSinceUpdate = (Date.now() - new Date(document.updatedAt || '').getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceUpdate > 365) return 'Warning'; // Old content gets warning
+    
+    return 'Endorsed'; // Default to endorsed
   }
 
   // Method to update cache - would be called by a separate caching process
-  async updateDocumentCache(documents: SigmaDocument[], documentType: 'workbook' | 'dataset') {
-    const cachedDocuments: CachedDocument[] = documents.map(doc => ({
-      ...doc,
-      searchableText: this.buildSearchableText(doc),
-      lastCached: new Date().toISOString()
-    }));
+  async updateDocumentCache(documents: SigmaDocument[], documentType: 'workbook' | 'dataset', additionalData?: any[]) {
+    const cachedDocuments: CachedDocument[] = documents.map((doc, index) => 
+      this.convertToCache(doc, additionalData?.[index])
+    );
 
     if (this.useLocalStorage) {
       // Store in local file
@@ -215,9 +294,7 @@ export class DocumentCache {
       for (const doc of cachedDocuments) {
         await this.dynamoClient.send(new PutItemCommand({
           TableName: this.tableName,
-          Item: marshall({
-            ...doc
-          })
+          Item: marshall(doc)
         }));
       }
     }
@@ -232,8 +309,9 @@ export class DocumentCache {
     const parts = [
       document.name,
       document.description || '',
+      document.created_by || '',
+      document.badge_status || '',
       ...(document.tags || []),
-      ...(document.elements?.map(el => `${el.name} ${el.description || ''}`) || [])
     ];
 
     return parts.join(' ').toLowerCase();
@@ -262,6 +340,45 @@ export class DocumentCache {
       console.log("Cache refresh completed successfully");
     } catch (error) {
       console.error("Failed to refresh cache:", error);
+      throw error;
+    }
+  }
+
+  // Method to populate cache from a JSON file (for manual loading)
+  async loadFromJsonFile(filePath: string) {
+    try {
+      const data = await fs.readFile(filePath, 'utf-8');
+      const documents = JSON.parse(data) as CachedDocument[];
+      
+      // Separate workbooks and datasets
+      const workbooks = documents.filter(doc => doc.type === 'workbook');
+      const datasets = documents.filter(doc => doc.type === 'dataset');
+
+      if (this.useLocalStorage) {
+        this.cache.set('workbooks', workbooks);
+        this.cache.set('datasets', datasets);
+        await this.saveCacheToLocalFile();
+      } else {
+        // Store in DynamoDB
+        if (!this.dynamoClient) {
+          throw new Error("DynamoDB client not initialized");
+        }
+
+        for (const doc of documents) {
+          await this.dynamoClient.send(new PutItemCommand({
+            TableName: this.tableName,
+            Item: marshall(doc)
+          }));
+        }
+
+        // Update in-memory cache
+        this.cache.set('workbooks', workbooks);
+        this.cache.set('datasets', datasets);
+      }
+
+      console.log(`Loaded ${workbooks.length} workbooks and ${datasets.length} datasets from JSON file`);
+    } catch (error) {
+      console.error("Failed to load from JSON file:", error);
       throw error;
     }
   }
