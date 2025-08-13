@@ -190,9 +190,9 @@ SIGMA_CLIENT_SECRET=your_actual_sigma_client_secret
 SIGMA_BASE_URL=https://api.sigmacomputing.com
 
 # Cache Configuration
-# Set to 'true' for local file-based cache (for testing)
-# Set to 'false' or omit for DynamoDB cache (for production)
-USE_LOCAL_CACHE=true
+# Set to 'true' to skip caching entirely (for local testing)
+# Set to 'false' or omit to use DynamoDB cache (for production)
+SKIP_CACHE=true
 
 # AWS Configuration (for local testing, these can be empty or use localstack)
 AWS_REGION=us-east-1
@@ -237,11 +237,72 @@ npm start
 
 The server will run on stdio and wait for MCP requests.
 
-**Note**: When using local cache (`USE_LOCAL_CACHE=true`), the server will create a `local-cache.json` file in the project root to store document metadata. This file will be automatically created on first run and updated when the cache is refreshed.
+**Note**: When using `SKIP_CACHE=true`, the server will fetch data directly from the Sigma API for each request, which is useful for testing but may be slower than using cached data.
 
 ## Testing
 
 Test the deployment:
+
+## Debugging
+
+The MCP server includes comprehensive debugging capabilities to help troubleshoot issues with REST API calls to Sigma.
+
+### Enabling Debug Mode
+
+To enable debug mode, set the `DEBUG_MODE` environment variable:
+
+```bash
+export DEBUG_MODE=true
+```
+
+Or add it to your `.env` file:
+
+```
+DEBUG_MODE=true
+```
+
+### Debug Output
+
+When debug mode is enabled, you'll see detailed logging for:
+
+- **MCP Server Operations**: Tool calls, resource requests, error handling
+- **Sigma API Calls**: HTTP requests, responses, authentication
+- **Document Analytics**: Cache operations, data fetching, parsing
+- **Token Management**: Token refresh, expiry, authentication status
+
+### Testing with Debug Mode
+
+Use the test script to run the analyze_documents tool with debugging:
+
+```bash
+# Build the project first
+npm run build
+
+# Run the test with debugging
+node test-analyze-documents.js
+```
+
+### Debug Log Format
+
+Debug messages follow this format:
+- `🔍 [DEBUG]` - Information and progress
+- `✅ [DEBUG]` - Success messages
+- `❌ [DEBUG]` - Error messages
+- `⚠️ [DEBUG]` - Warnings
+
+### Common Debug Scenarios
+
+1. **Authentication Issues**: Check token refresh logs
+2. **API Call Failures**: Look for HTTP status codes and error responses
+3. **Data Parsing Issues**: Check JSONL parsing logs
+4. **Cache Problems**: Verify cache hit/miss patterns
+
+### Troubleshooting Steps
+
+1. **Check Environment Variables**: Ensure all required variables are set
+2. **Verify Sigma API Credentials**: Test with the heartbeat tool first
+3. **Review Network Connectivity**: Check if Sigma API endpoints are reachable
+4. **Examine Cache Status**: Verify document cache is working properly
 
 ## Security Considerations
 
