@@ -13,7 +13,9 @@
     "test:local": "node test-local.js",
     "test:debug": "DEBUG_MODE=true node test-analyze-documents.js",
     "lint": "eslint src --ext .ts",
-    "package": "npm run build && zip -r sigma-mcp-server.zip dist/ node_modules/ package.json"
+    "package": "npm run build && npm ci --only=production && zip -r sigma-mcp-server.zip dist/ node_modules/ package.json && npm install",
+    "build:bundle": "esbuild src/lambda-handler.ts --bundle --platform=node --target=node18 --external:aws-sdk --outfile=dist/lambda-handler.js",
+    "package:bundle": "npm run build:bundle && zip -r lambda-bundle.zip dist/lambda-handler.js package.json node_modules/better-sqlite3/build/Release/better_sqlite3.node"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.680.0",
@@ -30,6 +32,7 @@
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "esbuild": "^0.20.0",
     "eslint": "^9.0.0",
     "jest": "^29.7.0",
     "tsx": "^4.19.0",

@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 sigma-mcp-server.zip
+lambda-bundle.zip
 node_modules
 dist
 dist-ssr
